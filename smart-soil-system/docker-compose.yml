@@ -1,0 +1,93 @@
+# ══════════════════════════════════════════════════════════════
+# docker-compose.yml — Smart Soil System Full Stack
+# AUCA SENG 8240 | Benjamin Mugisha Prince | 26979
+#
+# Services:
+#   smart-soil-db  → PostgreSQL 16 (central soil data repository)
+#   smart-soil-api → Spring Boot REST API (business logic + facade)
+#   nginx          → Reverse proxy (SSL termination + routing)
+#
+# Usage:
+#   docker-compose up -d          → start all containers
+#   docker-compose down           → stop containers
+#   docker-compose logs -f        → follow all logs
+#   docker-compose ps             → check status
+# ══════════════════════════════════════════════════════════════
+version: '3.9'
+
+services:
+
+  # ── PostgreSQL Database ─────────────────────────────────────
+  smart-soil-db:
+    image: postgres:16-alpine
+    container_name: rab_postgres
+    environment:
+      POSTGRES_DB:       smart_soil_db
+      POSTGRES_USER:     rab_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-rab_secure_2025}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - rab-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rab_admin -d smart_soil_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Spring Boot API ─────────────────────────────────────────
+  smart-soil-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rab_api
+    depends_on:
+      smart-soil-db:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL:      jdbc:postgresql://smart-soil-db:5432/smart_soil_db
+      SPRING_DATASOURCE_USERNAME: rab_admin
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-rab_secure_2025}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      APP_JWT_SECRET:             ${JWT_SECRET:-SmartSoilRABJWTSecret2025AUCA}
+      SPRING_PROFILES_ACTIVE:     prod
+    ports:
+      - "8080:8080"
+    networks:
+      - rab-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 45s
+      retries: 3
+
+  # ── Nginx Reverse Proxy ─────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: rab_nginx
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      smart-soil-api:
+        condition: service_healthy
+    networks:
+      - rab-network
+    restart: unless-stopped
+
+# ── Volumes ─────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+
+# ── Networks ─────────────────────────────────────────────────
+networks:
+  rab-network:
+    driver: bridge
